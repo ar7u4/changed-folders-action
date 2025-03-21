@@ -1,0 +1,66 @@
+name: 'Changed Folders Runner'
+description: 'Run custom commands or scripts for each changed folder based on a time interval.'
+author: 'Your Name'
+
+inputs:
+  time_interval:
+    description: 'Time interval to check for changes (e.g., "3 hours", "1 day").'
+    required: true
+    default: '1 day'
+  commands:
+    description: 'Commands to run for each folder, separated by newlines. Ignored if script is provided.'
+    required: false
+  script:
+    description: 'Script to run for each folder. If provided, commands are ignored.'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Validate inputs
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.commands }}" ] && [ -z "${{ inputs.script }}" ]; then
+          echo "::error::No commands or script provided. Please specify at least one."
+          exit 1
+        fi
+
+    - name: Detect changed folders
+      id: changed_folders
+      shell: bash
+      run: |
+        echo "::group::Detecting changed folders"
+        FOLDERS=$(python changed_folders.py "${{ inputs.time_interval }}")
+
+        if [ -z "$FOLDERS" ]; then
+          echo "::notice::No folders changed in the last ${{ inputs.time_interval }}. Exiting early."
+          exit 0
+        fi
+
+        echo "Detected folders: $FOLDERS"
+        echo "folders=$FOLDERS" >> $GITHUB_OUTPUT
+        echo "::endgroup::"
+
+    - name: Run script or commands for each folder
+      shell: bash
+      run: |
+        echo "::group::Running script/commands"
+        for FOLDER in ${{ steps.changed_folders.outputs.folders }}; do
+          echo "::notice::Processing folder: $FOLDER"
+          export FOLDER="$FOLDER"
+
+          if [ -n "${{ inputs.script }}" ]; then
+            echo "Running script ${{ inputs.script }} for $FOLDER"
+            chmod +x "${{ inputs.script }}"
+            "${{ inputs.script }}" "$FOLDER" || { echo "::error::Script failed for $FOLDER"; exit 1; }
+          elif [ -n "${{ inputs.commands }}" ]; then
+            while IFS= read -r CMD; do
+              echo "Running: $CMD"
+              eval "$CMD" || { echo "::error::Command failed: $CMD"; exit 1; }
+            done <<< "${{ inputs.commands }}"
+          fi
+        done
+        echo "::endgroup::"
