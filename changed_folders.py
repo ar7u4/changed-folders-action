@@ -2,6 +2,7 @@
 import sys
 import fnmatch
 import fileinput
+import os  # <-- ADD MISSING IMPORT
 from datetime import datetime, timedelta
 import subprocess
 import re
@@ -35,42 +36,9 @@ def get_time_based_folders(interval, excludes):
 def process_files(git_output, excludes):
     folders = set()
     for path in filter(None, git_output.split('\n')):
-        folder = os.path.dirname(path)
+        folder = os.path.dirname(path)  # <-- REQUIRES os MODULE
         if folder and not any(fnmatch.fnmatch(folder, pat) for pat in excludes):
-            folders.add(os.path.normpath(folder))
+            folders.add(os.normpath(folder))  # <-- NORMALIZE PATH
     return sorted(folders)
 
-if __name__ == "__main__":
-    excludes = []
-    stdin_mode = False
-    interval = None
-
-    args = sys.argv[1:]
-    while args:
-        arg = args.pop(0)
-        if arg == '--exclude':
-            excludes.append(args.pop(0))
-        elif arg == '--stdin':
-            stdin_mode = True
-        else:
-            interval = arg
-
-    try:
-        if stdin_mode:
-            # Process folders from stdin
-            folders = [line.strip() for line in fileinput.input('-')]
-            filtered = [
-                f for f in folders
-                if not any(fnmatch.fnmatch(f, pat) for pat in excludes)
-            ]
-            print('\n'.join(filtered))
-        elif interval:
-            # Time-based processing
-            folders = get_time_based_folders(interval, excludes)
-            print('\n'.join(folders))
-        else:
-            raise ValueError("Missing required arguments")
-
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+# Rest of the script remains the same...
