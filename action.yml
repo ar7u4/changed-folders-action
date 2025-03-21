@@ -1,3 +1,4 @@
+# action.yml
 name: 'Changed Folders Runner'
 description: 'Run custom commands or scripts for each changed folder based on a time interval.'
 author: 'Your Name'
@@ -20,12 +21,12 @@ runs:
     - name: Checkout workflow repository
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # Ensure full git history for proper filtering
+        fetch-depth: 0
 
     - name: Validate inputs
       shell: bash
       run: |
-        if [ -z "${{ inputs.commands }}" ] && [ -z "${{ inputs.script }}" ]; then
+        if [[ -z "${{ inputs.script }}" && -z "$(echo '${{ inputs.commands }}' | tr -d ' \n')" ]]; then
           echo "::error::No commands or script provided. Please specify at least one."
           exit 1
         fi
@@ -35,40 +36,48 @@ runs:
       shell: bash
       run: |
         echo "::group::Detecting changed folders"
-        # Use $GITHUB_ACTION_PATH to reference changed_folders.py from the action repository
-        FOLDERS=$(python "$GITHUB_ACTION_PATH/changed_folders.py" "${{ inputs.time_interval }}")
+        FOLDERS_RAW=$(python "$GITHUB_ACTION_PATH/changed_folders.py" "${{ inputs.time_interval }}")
 
-        if [ -z "$FOLDERS" ]; then
+        # Use null delimiter for safe handling of special characters
+        FOLDERS_ESCAPED=$(echo "$FOLDERS_RAW" | while IFS= read -r line; do printf "%q\n" "$line"; done)
+        echo "folders=$FOLDERS_ESCAPED" >> $GITHUB_OUTPUT
+
+        if [ -z "$FOLDERS_RAW" ]; then
           echo "::notice::No folders changed in the last ${{ inputs.time_interval }}. Exiting early."
           exit 0
         fi
 
-        echo "Detected folders: $FOLDERS"
-        echo "folders=$FOLDERS" >> $GITHUB_OUTPUT
+        echo "Detected folders:"
+        printf "%s\n" $FOLDERS_RAW
         echo "::endgroup::"
 
     - name: Run script or commands for each folder
       shell: bash
       run: |
         echo "::group::Running script/commands"
-        for FOLDER in ${{ steps.changed_folders.outputs.folders }}; do
+        # Read folders as array to handle spaces in paths
+        IFS=$'\n' read -d '' -r -a FOLDER_ARRAY <<< "${{ steps.changed_folders.outputs.folders }}"
+
+        for FOLDER in "${FOLDER_ARRAY[@]}"; do
+          FOLDER=$(eval echo "$FOLDER")  # Unescape quoted paths
           echo "::notice::Processing folder: $FOLDER"
           export FOLDER="$FOLDER"
 
-          if [ -n "${{ inputs.script }}" ]; then
+          if [[ -n "${{ inputs.script }}" ]]; then
             echo "Running script ${{ inputs.script }} for $FOLDER"
-            chmod +x "${{ inputs.script }}"
-            "${{ inputs.script }}" "$FOLDER" || { echo "::error::Script failed for $FOLDER"; exit 1; }
-          elif [ -n "${{ inputs.commands }}" ]; then
-            # Read commands line by line from the multi-line string input.
-            while IFS= read -r CMD || [ -n "$CMD" ]; do
-              # Skip empty lines.
-              if [ -z "$CMD" ]; then
-                continue
-              fi
+            SCRIPT_PATH="$GITHUB_WORKSPACE/${{ inputs.script }}"
+            if [[ ! -f "$SCRIPT_PATH" ]]; then
+              echo "::error::Script not found: $SCRIPT_PATH"
+              exit 1
+            fi
+            chmod +x "$SCRIPT_PATH"
+            "$SCRIPT_PATH" "$FOLDER" || { echo "::error::Script failed for $FOLDER"; exit 1; }
+          else
+            while IFS= read -r -d '' CMD; do
+              [[ -z "$CMD" ]] && continue
               echo "Running: $CMD"
-              eval "$CMD" || { echo "::error::Command failed: $CMD"; exit 1; }
-            done <<< "${{ inputs.commands }}"
+              bash -c "$CMD" || { echo "::error::Command failed: $CMD"; exit 1; }
+            done < <(printf '%s\0' "${{ inputs.commands }}")
           fi
         done
         echo "::endgroup::"
