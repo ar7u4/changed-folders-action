@@ -1,105 +1,23 @@
-# action.yml
-name: 'Changed Folders Runner'
-description: 'Run commands based on changed folders in time window or since last push'
-author: 'Your Name'
-
+name: 'List Changed Directories'
+description: 'List directories that have changed in the latest commit'
 inputs:
-  mode:
-    description: 'Detection mode (time-interval, last-push)'
+  target-file:
+    description: 'Target file to look for in directories'
     required: false
-    default: 'time-interval'
-  time_interval:
-    description: 'Time window for changes (e.g., "5 minutes")'
-    required: false
-    default: '1 day'
-  exclude:
-    description: 'Folder patterns to exclude (newline separated)'
-    required: false
-  commands:
-    description: 'Commands to execute per folder'
-    required: false
-  script:
-    description: 'Script to execute (overrides commands)'
-    required: false
-
+    default: ''
+outputs:
+  changed-directories:
+    description: 'List of changed directories'
 runs:
   using: 'composite'
   steps:
-    - name: Checkout repository
+    - name: 'Checkout repository'
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
-    - name: Detect changed folders
-      id: changed_folders
-      shell: bash
+    - name: 'List changed directories'
+      id: list-changed-directories
       run: |
-        echo "::group::Detecting changed folders"
-
-        # Prepare exclusion arguments
-        EXCLUDE_ARGS=()
-        if [[ -n "${{ inputs.exclude }}" ]]; then
-          while IFS= read -r pattern; do
-            EXCLUDE_ARGS+=("--exclude" "$pattern")
-          done <<< "${{ inputs.exclude }}"
-        fi
-
-        if [[ "${{ inputs.mode }}" == "last-push" ]]; then
-          # Last push mode requires push event context
-          if [[ -z "${{ github.event.before }}" || -z "${{ github.event.after }}" ]]; then
-            echo "::error::last-push mode requires push event trigger"
-            exit 1
-          fi
-
-          # Get changed files between push commits
-          CHANGED_FILES=$(git diff --name-only "${{ github.event.before }}" "${{ github.event.after }}")
-
-          # Extract folders and process exclusions
-          FOLDERS_RAW=$(echo "$CHANGED_FILES" | \
-            xargs -I{} dirname "{}" | \
-            grep -v '^\.$' | \
-            sort -u | \
-            python "$GITHUB_ACTION_PATH/changed_folders.py" --stdin "${EXCLUDE_ARGS[@]}")
-        else
-          # Time interval mode
-          FOLDERS_RAW=$(python "$GITHUB_ACTION_PATH/changed_folders.py" \
-            "${{ inputs.time_interval }}" \
-            "${EXCLUDE_ARGS[@]}")
-        fi
-
-        # Convert to JSON array
-        FOLDERS_JSON=$(jq -cn --argjson folders "$(echo "$FOLDERS_RAW" | jq -R -s -c 'split("\n") | map(select(. != ""))')" '$folders')
-        echo "folders=$FOLDERS_JSON" >> $GITHUB_OUTPUT
-
-        if [[ -z "$FOLDERS_RAW" ]]; then
-          echo "::notice::No changed folders found"
-          exit 0
-        fi
-
-        echo "Detected folders:"
-        echo "$FOLDERS_RAW"
-        echo "::endgroup::"
-
-    - name: Execute commands
-      shell: bash
-      run: |
-        echo "::group::Processing folders"
-        readarray -t FOLDERS < <(jq -r '.[]' <<< "${{ steps.changed_folders.outputs.folders }}")
-
-        for FOLDER in "${FOLDERS[@]}"; do
-          echo "::notice:: Processing $FOLDER"
-          export FOLDER="$FOLDER"
-
-          if [[ -n "${{ inputs.script }}" ]]; then
-            echo "Running script: ${{ inputs.script }}"
-            chmod +x "${{ inputs.script }}"
-            "${{ inputs.script }}" "$FOLDER" || exit $?
-          else
-            while IFS= read -r CMD; do
-              [[ -z "$CMD" ]] && continue
-              echo "→ $CMD"
-              eval "$CMD" || exit $?
-            done <<< "${{ inputs.commands }}"
-          fi
-        done
-        echo "::endgroup::"
+        #!/bin/sh
+        # Find changed directories
+        CHANGED_DIRECTORIES=$(git diff --name-only HEAD~1 HEAD | xargs -I{} dirname {} | sort | uniq)
+        echo "changed-directories=$CHANGED_DIRECTORIES" >> $GITHUB_OUTPUT
