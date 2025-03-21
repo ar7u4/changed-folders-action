@@ -21,3 +21,4 @@ runs:
         # Find changed directories
         CHANGED_DIRECTORIES=$(git diff --name-only HEAD~1 HEAD | xargs -I{} dirname {} | sort | uniq)
         echo "changed-directories=$CHANGED_DIRECTORIES" >> $GITHUB_OUTPUT
+      shell: sh
