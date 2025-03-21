@@ -20,14 +20,6 @@ runs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Validate inputs
-      shell: bash
-      run: |
-        if [ -z "${{ inputs.commands }}" ] && [ -z "${{ inputs.script }}" ]; then
-          echo "::error::No commands or script provided. Please specify at least one."
-          exit 1
-        fi
-
     - name: Detect changed folders
       id: changed_folders
       shell: bash
@@ -36,7 +28,7 @@ runs:
         FOLDERS=$(python changed_folders.py "${{ inputs.time_interval }}")
 
         if [ -z "$FOLDERS" ]; then
-          echo "::notice::No folders changed in the last ${{ inputs.time_interval }}. Exiting early."
+          echo "No folders changed in the last ${{ inputs.time_interval }}. Exiting early."
           exit 0
         fi
 
@@ -49,18 +41,20 @@ runs:
       run: |
         echo "::group::Running script/commands"
         for FOLDER in ${{ steps.changed_folders.outputs.folders }}; do
-          echo "::notice::Processing folder: $FOLDER"
+          echo "Processing folder: $FOLDER"
           export FOLDER="$FOLDER"
 
           if [ -n "${{ inputs.script }}" ]; then
             echo "Running script ${{ inputs.script }} for $FOLDER"
             chmod +x "${{ inputs.script }}"
-            "${{ inputs.script }}" "$FOLDER" || { echo "::error::Script failed for $FOLDER"; exit 1; }
+            "${{ inputs.script }}" "$FOLDER"
           elif [ -n "${{ inputs.commands }}" ]; then
             while IFS= read -r CMD; do
               echo "Running: $CMD"
-              eval "$CMD" || { echo "::error::Command failed: $CMD"; exit 1; }
+              eval "$CMD"
             done <<< "${{ inputs.commands }}"
+          else
+            echo "No script or commands provided. Skipping."
           fi
         done
         echo "::endgroup::"
