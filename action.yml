@@ -1,6 +1,6 @@
 name: 'Changed Folders Runner'
 description: 'Run custom commands or scripts for each changed folder based on a time interval.'
-author: 'ar7u4'
+author: 'Your Name'
 
 inputs:
   time_interval:
@@ -19,6 +19,8 @@ runs:
   steps:
     - name: Checkout workflow repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Ensure full git history for proper filtering
 
     - name: Validate inputs
       shell: bash
@@ -58,7 +60,12 @@ runs:
             chmod +x "${{ inputs.script }}"
             "${{ inputs.script }}" "$FOLDER" || { echo "::error::Script failed for $FOLDER"; exit 1; }
           elif [ -n "${{ inputs.commands }}" ]; then
-            while IFS= read -r CMD; do
+            # Read commands line by line from the multi-line string input.
+            while IFS= read -r CMD || [ -n "$CMD" ]; do
+              # Skip empty lines.
+              if [ -z "$CMD" ]; then
+                continue
+              fi
               echo "Running: $CMD"
               eval "$CMD" || { echo "::error::Command failed: $CMD"; exit 1; }
             done <<< "${{ inputs.commands }}"
