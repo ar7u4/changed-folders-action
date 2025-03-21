@@ -1,83 +1,36 @@
 # action.yml
-name: 'Changed Folders Runner'
-description: 'Run custom commands or scripts for each changed folder based on a time interval.'
-author: 'Your Name'
-
 inputs:
-  time_interval:
-    description: 'Time interval to check for changes (e.g., "3 hours", "1 day").'
-    required: true
-    default: '1 day'
-  commands:
-    description: 'Commands to run for each folder, separated by newlines. Ignored if script is provided.'
-    required: false
-  script:
-    description: 'Script to run for each folder. If provided, commands are ignored.'
+  # ... existing inputs ...
+  exclude:
+    description: 'Folders to exclude (one per line, wildcard patterns)'
     required: false
 
 runs:
   using: 'composite'
   steps:
-    - name: Checkout workflow repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Validate inputs
-      shell: bash
-      run: |
-        if [[ -z "${{ inputs.script }}" && -z "$(echo '${{ inputs.commands }}' | tr -d ' \n')" ]]; then
-          echo "::error::No commands or script provided. Please specify at least one."
-          exit 1
-        fi
-
     - name: Detect changed folders
       id: changed_folders
       shell: bash
       run: |
         echo "::group::Detecting changed folders"
-        FOLDERS_RAW=$(python "$GITHUB_ACTION_PATH/changed_folders.py" "${{ inputs.time_interval }}")
+        EXCLUDE_ARGS=""
+        if [[ -n "${{ inputs.exclude }}" ]]; then
+          EXCLUDE_ARGS="--exclude ${{ inputs.exclude }}"
+        fi
 
-        # Use null delimiter for safe handling of special characters
-        FOLDERS_ESCAPED=$(echo "$FOLDERS_RAW" | while IFS= read -r line; do printf "%q\n" "$line"; done)
-        echo "folders=$FOLDERS_ESCAPED" >> $GITHUB_OUTPUT
+        FOLDERS_RAW=$(python "$GITHUB_ACTION_PATH/changed_folders.py" \
+          "${{ inputs.time_interval }}" \
+          "$EXCLUDE_ARGS")
+
+        # Proper multiline output handling
+        FOLDERS_JSON=$(jq -n --arg folders "$FOLDERS_RAW" '$folders | split("\n")')
+        echo "folders=$FOLDERS_JSON" >> $GITHUB_OUTPUT
 
         if [ -z "$FOLDERS_RAW" ]; then
-          echo "::notice::No folders changed in the last ${{ inputs.time_interval }}. Exiting early."
+          echo "::notice::No folders changed. Exiting early."
           exit 0
         fi
 
         echo "Detected folders:"
-        printf "%s\n" $FOLDERS_RAW
-        echo "::endgroup::"
-
-    - name: Run script or commands for each folder
-      shell: bash
-      run: |
-        echo "::group::Running script/commands"
-        # Read folders as array to handle spaces in paths
-        IFS=$'\n' read -d '' -r -a FOLDER_ARRAY <<< "${{ steps.changed_folders.outputs.folders }}"
-
-        for FOLDER in "${FOLDER_ARRAY[@]}"; do
-          FOLDER=$(eval echo "$FOLDER")  # Unescape quoted paths
-          echo "::notice::Processing folder: $FOLDER"
-          export FOLDER="$FOLDER"
-
-          if [[ -n "${{ inputs.script }}" ]]; then
-            echo "Running script ${{ inputs.script }} for $FOLDER"
-            SCRIPT_PATH="$GITHUB_WORKSPACE/${{ inputs.script }}"
-            if [[ ! -f "$SCRIPT_PATH" ]]; then
-              echo "::error::Script not found: $SCRIPT_PATH"
-              exit 1
-            fi
-            chmod +x "$SCRIPT_PATH"
-            "$SCRIPT_PATH" "$FOLDER" || { echo "::error::Script failed for $FOLDER"; exit 1; }
-          else
-            while IFS= read -r -d '' CMD; do
-              [[ -z "$CMD" ]] && continue
-              echo "Running: $CMD"
-              bash -c "$CMD" || { echo "::error::Command failed: $CMD"; exit 1; }
-            done < <(printf '%s\0' "${{ inputs.commands }}")
-          fi
-        done
+        echo "$FOLDERS_RAW"
         echo "::endgroup::"
