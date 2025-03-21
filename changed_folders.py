@@ -1,44 +1,39 @@
-# changed_folders.py
-import sys
-import fnmatch
-import fileinput
-import os  # <-- ADD MISSING IMPORT
-from datetime import datetime, timedelta
-import subprocess
-import re
-
-def parse_time_interval(interval):
-    units = {
-        'sec': 'seconds', 'min': 'minutes', 'hr': 'hours',
-        'day': 'days', 'week': 'weeks', 'month': 'months'
-    }
-    total = timedelta()
-
-    matches = re.findall(r'(\d+)\s*(sec|min|hr|day|week|month)s?', interval.lower())
-    for value, unit in matches:
-        kwargs = {units[unit]: int(value)}
-        total += timedelta(**kwargs)
-
-    return datetime.now() - total
-
 def get_time_based_folders(interval, excludes):
     cutoff = parse_time_interval(interval)
-    cmd = [
+
+    # Get current branch name
+    branch_cmd = ['git', 'rev-parse', '--abbrev-ref', 'HEAD']
+    branch_result = subprocess.run(branch_cmd, capture_output=True, text=True)
+    if branch_result.returncode != 0:
+        raise RuntimeError(f"Failed to get branch: {branch_result.stderr}")
+    current_branch = branch_result.stdout.strip()
+
+    # Find first parent commit in the time window
+    commit_cmd = [
         'git', 'log',
-        '--name-only',
-        '--pretty=format:',
-        f'--since={cutoff.isoformat()}',
-        '--diff-filter=dACMRTUXB'
+        '--first-parent',
+        '--until', cutoff.isoformat(),
+        '--format=%H',
+        '-n', '1',
+        current_branch
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    return process_files(result.stdout, excludes)
 
-def process_files(git_output, excludes):
-    folders = set()
-    for path in filter(None, git_output.split('\n')):
-        folder = os.path.dirname(path)  # <-- REQUIRES os MODULE
-        if folder and not any(fnmatch.fnmatch(folder, pat) for pat in excludes):
-            folders.add(os.normpath(folder))  # <-- NORMALIZE PATH
-    return sorted(folders)
+    commit_result = subprocess.run(commit_cmd, capture_output=True, text=True)
+    if commit_result.returncode != 0:
+        raise RuntimeError(f"Commit lookup failed: {commit_result.stderr}")
 
-# Rest of the script remains the same...
+    base_commit = commit_result.stdout.strip() or 'HEAD^'
+
+    # Get changed files between commits
+    diff_cmd = [
+        'git', 'diff',
+        '--name-only',
+        '--diff-filter=dACMRTUXB',
+        f'{base_commit}..HEAD'
+    ]
+
+    diff_result = subprocess.run(diff_cmd, capture_output=True, text=True)
+    if diff_result.returncode != 0:
+        raise RuntimeError(f"Git diff failed: {diff_result.stderr}")
+
+    return process_files(diff_result.stdout, excludes)
