@@ -1,24 +1,88 @@
-name: 'List Changed Directories'
-description: 'List directories that have changed in the latest commit'
+name: Changed Folders Action
+description: Detect changed folders within time window or since last push
+author: Your Name
+
 inputs:
-  target-file:
-    description: 'Target file to look for in directories'
-    required: false
-    default: ''
+  mode:
+    description: 'Detection mode (time-interval, last-push)'
+    default: 'time-interval'
+  time_interval:
+    description: 'Time window for changes (e.g., "5 minutes")'
+    default: '1 day'
+  exclude:
+    description: 'Folder patterns to exclude (newline separated)'
+  commands:
+    description: 'Commands to execute per folder'
+  script:
+    description: 'Script to execute (overrides commands)'
+  json:
+    description: 'Output as JSON'
+    default: 'false'
+
 outputs:
-  changed-directories:
-    description: 'List of changed directories'
+  folders:
+    description: 'List of changed folders'
+  count:
+    description: 'Number of changed folders'
+
 runs:
   using: 'composite'
   steps:
-    - name: 'Checkout repository'
+    - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-    - name: 'List changed directories'
-      id: list-changed-directories
+    - name: Detect changed folders
+      id: detect
+      shell: bash
       run: |
-        #!/bin/sh
-        # Find changed directories
-        CHANGED_DIRECTORIES=$(git diff --name-only HEAD~1 HEAD | xargs -I{} dirname {} | sort | uniq)
-        echo "changed-directories=$CHANGED_DIRECTORIES" >> $GITHUB_OUTPUT
-      shell: sh
+        echo "::group::Detecting changed folders"
+
+        # Build exclusion args
+        EXCLUDE_ARGS=()
+        if [[ -n "${{ inputs.exclude }}" ]]; then
+          while IFS= read -r pattern; do
+            EXCLUDE_ARGS+=("--exclude" "$pattern")
+          done <<< "${{ inputs.exclude }}"
+        fi
+
+        # Run detection
+        if [[ "${{ inputs.mode }}" == "last-push" ]]; then
+          FOLDERS=$(python detect_folders.py last-push "${EXCLUDE_ARGS[@]}")
+        else
+          FOLDERS=$(python detect_folders.py time "${{ inputs.time_interval }}" "${EXCLUDE_ARGS[@]}")
+        fi
+
+        # Set outputs
+        if [[ "${{ inputs.json }}" == "true" ]]; then
+          echo "folders=$(echo "$FOLDERS" | jq -R -s -c 'split("\n") | map(select(. != ""))')" >> $GITHUB_OUTPUT
+        else
+          echo "folders=${FOLDERS//$'\n'/${{ inputs.separator }}" >> $GITHUB_OUTPUT
+        fi
+        echo "count=$(echo "$FOLDERS" | wc -l | tr -d ' ')" >> $GITHUB_OUTPUT
+
+        echo "::endgroup::"
+
+    - name: Process folders
+      shell: bash
+      run: |
+        echo "::group::Processing folders"
+        readarray -t FOLDER_LIST <<< "${{ steps.detect.outputs.folders }}"
+
+        for FOLDER in "${FOLDER_LIST[@]}"; do
+          [[ -z "$FOLDER" ]] && continue
+
+          echo "Processing: $FOLDER"
+          export FOLDER
+
+          if [[ -n "${{ inputs.script }}" ]]; then
+            "${{ inputs.script }}" "$FOLDER"
+          else
+            while IFS= read -r CMD; do
+              [[ -z "$CMD" ]] && continue
+              eval "$CMD"
+            done <<< "${{ inputs.commands }}"
+          fi
+        done
+        echo "::endgroup::"
